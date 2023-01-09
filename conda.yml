@@ -1,0 +1,10 @@
+name: energyalternatives
+channels:
+  - defaults
+dependencies:
+  - openpyxl
+  - pytz
+  - numpy
+  - matplotlib
+  - scipy
+prefix: /home/sbrisson/anaconda3/envs/energyalternatives
