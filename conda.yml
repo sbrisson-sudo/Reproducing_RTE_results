@@ -1,4 +1,4 @@
-name: energyalternatives2
+name: energyalternatives
 channels:
   - defaults
 dependencies:

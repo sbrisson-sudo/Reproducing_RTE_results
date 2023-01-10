@@ -2,21 +2,11 @@
 
 # Importations
 
+import sys
 import os
 import pickle
 import pandas as pd
-
 import logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="[%(asctime)s] [%(levelname)s] %(message)s",
-    datefmt='%H:%M:%S',
-    handlers=[
-        # logging.FileHandler("debug.log"), 
-        logging.StreamHandler()
-    ]
-)
-
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -26,8 +16,6 @@ from Data_processing_functions import *
 from Electric_System_model import *
 
 from pyomo.opt import SolverFactory
-
-
 
 def Simulation_multinode(xls_file, serialize=False, resultfilename="Result"):
     """Load the input data from the xlsx file then build the pyomo model and call the solver
@@ -41,6 +29,8 @@ def Simulation_multinode(xls_file, serialize=False, resultfilename="Result"):
         Output of the solver
     """
     
+    dt0 = datetime(1,1,1)
+    ref_time = datetime.now()
     start_time = datetime.now()
     year=2018
 
@@ -90,9 +80,11 @@ def Simulation_multinode(xls_file, serialize=False, resultfilename="Result"):
     # Model creation and solving #
     ##############################
     
-    end_time = datetime.now()
-    logging.info('Model creation at {}'.format(end_time - start_time))
+    logging.info('Input data loading time : ' + (dt0+(datetime.now()-ref_time)).strftime('%Mm:%Ss'))
+    ref_time = datetime.now()
     
+    logging.info('Start creating model')
+
     model = GetElectricitySystemModel(
         Parameters={
             "areaConsumption": areaConsumption,
@@ -109,8 +101,10 @@ def Simulation_multinode(xls_file, serialize=False, resultfilename="Result"):
     tee_value = True
     solver_native_list = ["mosek", "glpk"]
 
-    end_time = datetime.now()
-    logging.info('Start solving at {}'.format(end_time - start_time))
+    logging.info('Model creation time : ' + (dt0+(datetime.now()-ref_time)).strftime('%Mm:%Ss'))
+    ref_time = datetime.now()
+
+    logging.info('Start solving')
 
     if solver in solver_native_list:
         opt = SolverFactory(solver)
@@ -119,9 +113,9 @@ def Simulation_multinode(xls_file, serialize=False, resultfilename="Result"):
         opt = SolverFactory(solver,executable=solver_path,tee=tee_value)
 
     results=opt.solve(model)
-    end_time = datetime.now()
-    logging.info('Solved at {}'.format(end_time - start_time))
     
+    logging.info('Solving time : ' + (dt0+(datetime.now()-ref_time)).strftime('%Mm:%Ss'))
+
     ##############################
     # Data extraction and saving #
     ##############################
@@ -132,16 +126,43 @@ def Simulation_multinode(xls_file, serialize=False, resultfilename="Result"):
             logging.info(f"Saving serialized solver outputs in {resultfilename}.pickle")
             pickle.dump(Variables, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    end_time = datetime.now()
-    logging.info('Total duration: {}'.format(end_time - start_time))
+    logging.info('Solving time : ' + (dt0+(datetime.now()-start_time)).strftime('%Mm:%Ss'))
+    
     return Variables
 
 
 if __name__ == "__main__":
     
-    xls_file_path = "Multinode_input.xlsx"
-    xls_file = pd.ExcelFile(xls_file_path)
-    
+    # Reading input data file
+    try:
+        xls_file_path = sys.argv[1]
+    except IndexError:
+        print(f"ERROR : missing input file\nUsage : {sys.argv[0]} <input_data.xlsx>")
+        exit()
+        
+    try:
+        xls_file = pd.ExcelFile(xls_file_path)
+    except ValueError as error:
+        print("ERROR : issue with input data file format, original message:\n")
+        print(error)
+        
+    # get the working directory
+    working_dir = os.path.dirname(xls_file_path)
+    if working_dir == "" : working_dir = os.getcwd()
+    os.chdir(working_dir)
+
+    # configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] [%(levelname)s] %(message)s",
+        datefmt='%H:%M:%S',
+        handlers=[
+            logging.FileHandler("simulation.log"), 
+            logging.StreamHandler()
+        ]
+    )
+
+    # running the simulation
     Simulation_multinode(xls_file, serialize=True)
     
     
