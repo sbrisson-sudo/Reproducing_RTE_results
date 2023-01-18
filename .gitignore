@@ -2,3 +2,6 @@ __pycache__
 
 # output data : faire en scp
 *pickle
+
+# old files
+*.orig.*
