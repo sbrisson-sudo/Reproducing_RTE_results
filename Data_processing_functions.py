@@ -38,9 +38,7 @@ def Marginal_cost_adjustment(TechParameters,number_of_sub_techs,techs,areas,carb
 
     TechParameters.reset_index(inplace=True)
     for tech in tech_emissions.keys():
-        TechParameters.loc[TechParameters.TECHNOLOGIES == tech, "energyCost"] = \
-            (TechParameters.loc[TechParameters.TECHNOLOGIES == tech, "energyCost"].astype(float) - \
-             carbon_tax_ini * tech_emissions[tech]) * fossil_factor[tech] + carbon_tax* tech_emissions[tech]
+        TechParameters.loc[TechParameters.TECHNOLOGIES == tech, "energyCost"] = (TechParameters.loc[TechParameters.TECHNOLOGIES == tech, "energyCost"].astype(float) - carbon_tax_ini * tech_emissions[tech]) * fossil_factor[tech] + carbon_tax* tech_emissions[tech]
 
     TechParameters.set_index(["AREAS", "TECHNOLOGIES"], inplace=True)
 
@@ -55,8 +53,7 @@ def Marginal_cost_adjustment(TechParameters,number_of_sub_techs,techs,areas,carb
         for tech in techs:
             for area in areas:
                 # print(TechParameters[TechParameters.index==(area,tech)])
-                if tech in ["OldNuke", "NewNuke", "Solar", 'WindOnShore', 'WindOffShore', 'HydroRiver', 'HydroReservoir',
-                            'curtailment']:
+                if tech in ["OldNuke", "NewNuke", "Solar", 'WindOnShore', 'WindOffShore', 'HydroRiver', 'HydroReservoir','curtailment']:
                     break
                 u = TechParameters[TechParameters.index == (area, tech)]
                 if number_of_sub_techs%2 != 0:
@@ -99,45 +96,74 @@ def Marginal_cost_adjustment(TechParameters,number_of_sub_techs,techs,areas,carb
 
 
 def CHP_processing(areaConsumption,xls_file):
-    chp_production = pd.read_excel(xls_file,"chpProduction")
-    chp_production["Date"] = pd.to_datetime(chp_production["Date"])
-    chp_production.set_index(["AREAS", "Date"], inplace=True)
+    
+    # subtract CHP power to consumption
+    
+    chp_production = pd.read_excel(xls_file,"chpProduction").set_index(["AREAS", "Date"])
     chp_production["chpProduction"] = chp_production.chpProduction.astype(float)
+    
     for country in chp_production.reset_index().AREAS.unique():
-        areaConsumption.loc[country, "areaConsumption"] = areaConsumption.loc[country, "areaConsumption"].to_numpy() - \
-                                                          chp_production.loc[country, "chpProduction"].to_numpy()
+        
+        areaConsumption.loc[country, "areaConsumption"] = areaConsumption.loc[country, "areaConsumption"].to_numpy() - chp_production.loc[country, "chpProduction"].to_numpy()
+        
     return areaConsumption
 
 
 def Thermosensibility(areaConsumption,xls_file):
+    
+    # loading thermosensibility
     th_sensi= pd.read_excel(xls_file, "Thermosensi")
+    
+    # loading temperature time series
     temp = pd.read_excel(xls_file, "ConsoTemp")
     temp["Date"] = pd.to_datetime(temp["Date"])
+    
+    # choix d'année hardcodé -> à changer
     temp = temp[temp.Date.dt.year == 2018]
-    areas=temp.AREAS.unique()
+    
+    areas = temp.AREAS.unique()
     temp.set_index(["AREAS", "Date"], inplace=True)
     temp["Consumption"] = areaConsumption["areaConsumption"]
+    
     for area in areas:
-        temp_country = temp.loc[(area, slice(None)), :]
-        # print(th_sensi)
-        th_sensi_country=th_sensi.loc[th_sensi.AREAS==area,"Th_sensi"].sum()
-        (ConsoTempeYear_decomposed_df, Thermosensibilite) = Decomposeconso(temp_country, TemperatureThreshold=15)
-        coef=th_sensi_country/abs(np.array(list(Thermosensibilite.values())).mean()/1000)
+        
+        temp_country = temp.loc[area]
+
+        th_sensi_country = th_sensi.loc[th_sensi.AREAS==area,"Th_sensi"].sum()
+        
+        # DecomposeConso : for T < TemperatureThreshold : for each hour of the day perform a linear reagression between conso and temperature ; return a dictionnary containing for each hour of the day the associated thermosensibility and a dataframe with 2 columns : TS_C and NTS_C 
+        ConsoTempeYear_decomposed_df, Thermosensibilite = Decomposeconso(temp_country, TemperatureThreshold=15)
+        
+        # modifying computed TS to match the mean TS specified as input
+        coef = th_sensi_country / abs(np.array(list(Thermosensibilite.values())).mean()/1000)
+        
         NewThermosensibilite = {}
-        for key in Thermosensibilite:    NewThermosensibilite[key] = coef * Thermosensibilite[key]
-        NewConsoTempeYear_decomposed_df = Recompose(ConsoTempeYear_decomposed_df, NewThermosensibilite,
-                                                    TemperatureThreshold=15)
-    areaConsumption.loc[(area,slice(None)),"areaConsumption"]=NewConsoTempeYear_decomposed_df["Consumption"]
+        
+        for key in Thermosensibilite :    
+            NewThermosensibilite[key] = coef * Thermosensibilite[key]
+            
+        # Recompose conso with new TS
+        NewConsoTempeYear_decomposed_df = Recompose(
+            ConsoTempeYear_decomposed_df, NewThermosensibilite, TemperatureThreshold=15
+            )
+        
+        areaConsumption.loc[(area,slice(None)),"areaConsumption"] = NewConsoTempeYear_decomposed_df["Consumption"]
+            
     return areaConsumption
 
 def Flexibility_data_processing(areaConsumption,year,xls_file):
+    
     ConsoParameters = pd.read_excel(xls_file,"FLEX_CONSUM")
 
-    areas_list=ConsoParameters.AREAS.unique()
+    areas_list = ConsoParameters.AREAS.unique()
     ConsoParameters_=pd.DataFrame(columns=["AREAS","FLEX_CONSUM","unit","add_consum","LoadCost","flex_ratio","flex_type","labourcost"],data=np.array([[None]*8])).set_index(["AREAS", "FLEX_CONSUM"])
+    
     ConsoParameters.set_index(["AREAS", "FLEX_CONSUM"], inplace=True)
-    to_flex_consumption=pd.DataFrame(columns=["AREAS","Date","FLEX_CONSUM","to_flex_consumption"],data=np.array([[None]*4])).set_index(["AREAS","Date","FLEX_CONSUM"])
-    labour_ratios=pd.DataFrame(columns=["AREAS","Date","FLEX_CONSUM","labour_ratio"],data=np.array([[None]*4])).set_index(["AREAS", "Date", "FLEX_CONSUM"])
+    
+    to_flex_consumption = pd.DataFrame(columns=["AREAS","Date","FLEX_CONSUM","to_flex_consumption"], data=np.array([[None]*4])).set_index(["AREAS","Date","FLEX_CONSUM"])
+    
+    labour_ratios = pd.DataFrame(columns=["AREAS","Date","FLEX_CONSUM","labour_ratio"],data=np.array([[None]*4])).set_index(["AREAS", "Date", "FLEX_CONSUM"])
+    
     for area in areas_list:
         ConsoTempe_df = pd.read_excel(xls_file,"ConsoTemp",parse_dates=['Date']).set_index(["AREAS","Date"])
         ConsoTempe_df_nodup = ConsoTempe_df.loc[~ConsoTempe_df.index.duplicated(), :]
@@ -145,24 +171,20 @@ def Flexibility_data_processing(areaConsumption,year,xls_file):
 
         VEProfile_df = pd.read_excel(xls_file,'EVModel')
         NbVE = ConsoParameters.loc[(area,"EV"),"add_consum"] # millions
-        ev_consumption = NbVE * Profile2Consumption(Profile_df=VEProfile_df,
-                                                    Temperature_df=ConsoTempe_df_nodup.loc[str(year)][
-                                                        ['Temperature']])[ ['Consumption']]
+        
+        ev_consumption = NbVE * Profile2Consumption(Profile_df=VEProfile_df, Temperature_df=ConsoTempe_df_nodup.loc[str(year)][['Temperature']])[ ['Consumption']]
+        
         ev_consumption.reset_index(inplace=True)
         ev_consumption["Date"] = pd.to_datetime(ev_consumption["Date"]) #+ pd.DateOffset(years=year - weather_year)
         ev_consumption.set_index("Date", inplace=True)
+        
         h2_Energy = ConsoParameters.loc[(area,"H2"),"add_consum"] * 10 ** 6  ## H2 volume in MWh/year
+        
         h2_Energy_flat_consumption = ev_consumption.Consumption * 0 + h2_Energy / bisextile(year)
-        to_flex_consumption = pd.concat([to_flex_consumption, pd.concat([pd.DataFrame(
-                                             {'to_flex_consumption': ev_consumption.Consumption, 'FLEX_CONSUM': 'EV',
-                                              'AREAS': area}).reset_index().set_index(['AREAS', 'Date', 'FLEX_CONSUM']),
-                                         pd.DataFrame(
-                                             {'to_flex_consumption': h2_Energy_flat_consumption, 'FLEX_CONSUM': 'H2',
-                                              'AREAS': area}).reset_index().set_index(
-                                             ['AREAS', 'Date', 'FLEX_CONSUM'])])])
-        ConsoParameters_ =pd.concat([ConsoParameters_, ConsoParameters.join(
-            to_flex_consumption.groupby(["AREAS","FLEX_CONSUM"]).max().rename(columns={"to_flex_consumption": "max_power"}))])
-
+        
+        to_flex_consumption = pd.concat([to_flex_consumption, pd.concat([pd.DataFrame({'to_flex_consumption': ev_consumption.Consumption, 'FLEX_CONSUM': 'EV','AREAS': area}).reset_index().set_index(['AREAS', 'Date', 'FLEX_CONSUM']),pd.DataFrame({'to_flex_consumption': h2_Energy_flat_consumption, 'FLEX_CONSUM': 'H2','AREAS': area}).reset_index().set_index(['AREAS', 'Date', 'FLEX_CONSUM'])])])
+        
+        ConsoParameters_ =pd.concat([ConsoParameters_, ConsoParameters.join(to_flex_consumption.groupby(["AREAS","FLEX_CONSUM"]).max().rename(columns={"to_flex_consumption": "max_power"}))])
 
         def labour_ratio_cost(df):  # higher labour costs at night
             if df.hour in range(7, 17):
@@ -200,11 +222,11 @@ def CHP_processing_single_node(areaConsumption,xls_file):
     chp_production["Date"] = pd.to_datetime(chp_production["Date"])
     chp_production.set_index(["Date"], inplace=True)
     chp_production["chpProduction"] = chp_production.chpProduction.astype(float)
-    areaConsumption["areaConsumption"] = areaConsumption["areaConsumption"].to_numpy() - \
-                                                          chp_production["chpProduction"].to_numpy()
+    areaConsumption["areaConsumption"] = areaConsumption["areaConsumption"].to_numpy() - chp_production["chpProduction"].to_numpy()
     return areaConsumption
 
 def Thermosensibility_single_node(areaConsumption,xls_file):
+    
     th_sensi_country= pd.read_excel(xls_file, "Thermosensi").loc[:,"Th_sensi"].sum()
     temp = pd.read_excel(xls_file, "ConsoTemp")
     temp["Date"] = pd.to_datetime(temp["Date"])
@@ -217,12 +239,12 @@ def Thermosensibility_single_node(areaConsumption,xls_file):
     coef=th_sensi_country/abs(np.array(list(Thermosensibilite.values())).mean()/1000)
     NewThermosensibilite = {}
     for key in Thermosensibilite:    NewThermosensibilite[key] = coef * Thermosensibilite[key]
-    NewConsoTempeYear_decomposed_df = Recompose(ConsoTempeYear_decomposed_df, NewThermosensibilite,
-                                                    TemperatureThreshold=15)
+    NewConsoTempeYear_decomposed_df = Recompose(ConsoTempeYear_decomposed_df, NewThermosensibilite,TemperatureThreshold=15)
     areaConsumption["areaConsumption"]=NewConsoTempeYear_decomposed_df["Consumption"]
     return areaConsumption
 
 def Flexibility_data_processing_single_node(areaConsumption,year,xls_file):
+    
     ConsoParameters = pd.read_excel(xls_file,"FLEX_CONSUM")
 
 
@@ -234,22 +256,14 @@ def Flexibility_data_processing_single_node(areaConsumption,year,xls_file):
     ConsoTempe_df_nodup = ConsoTempe_df.loc[~ConsoTempe_df.index.duplicated(), :]
     VEProfile_df = pd.read_excel(xls_file,'EVModel')
     NbVE = ConsoParameters.loc[("EV"),"add_consum"] # millions
-    ev_consumption = NbVE * Profile2Consumption(Profile_df=VEProfile_df,
-                                                Temperature_df=ConsoTempe_df_nodup.loc[str(year)][
-                                                    ['Temperature']])[ ['Consumption']]
+    ev_consumption = NbVE * Profile2Consumption(Profile_df=VEProfile_df,Temperature_df=ConsoTempe_df_nodup.loc[str(year)][['Temperature']])[ ['Consumption']]
     ev_consumption.reset_index(inplace=True)
     ev_consumption["Date"] = pd.to_datetime(ev_consumption["Date"]) #+ pd.DateOffset(years=year - weather_year)
     ev_consumption.set_index("Date", inplace=True)
     h2_Energy = ConsoParameters.loc[("H2"),"add_consum"] * 10 ** 6  ## H2 volume in MWh/year
     h2_Energy_flat_consumption = ev_consumption.Consumption * 0 + h2_Energy / bisextile(year)
-    to_flex_consumption = pd.concat([to_flex_consumption, pd.concat([pd.DataFrame(
-                                         {'to_flex_consumption': ev_consumption.Consumption, 'FLEX_CONSUM': 'EV'}).reset_index().set_index(
-                                         ['Date', 'FLEX_CONSUM']),
-                                     pd.DataFrame(
-                                         {'to_flex_consumption': h2_Energy_flat_consumption, 'FLEX_CONSUM': 'H2'}).reset_index().set_index(
-                                         ['Date', 'FLEX_CONSUM'])])])
-    ConsoParameters_ =pd.concat([ConsoParameters_, ConsoParameters.join(
-        to_flex_consumption.groupby(["FLEX_CONSUM"]).max().rename(columns={"to_flex_consumption": "max_power"}))])
+    to_flex_consumption = pd.concat([to_flex_consumption, pd.concat([pd.DataFrame({'to_flex_consumption': ev_consumption.Consumption, 'FLEX_CONSUM': 'EV'}).reset_index().set_index(['Date', 'FLEX_CONSUM']),pd.DataFrame({'to_flex_consumption': h2_Energy_flat_consumption, 'FLEX_CONSUM': 'H2'}).reset_index().set_index(['Date', 'FLEX_CONSUM'])])])
+    ConsoParameters_ =pd.concat([ConsoParameters_, ConsoParameters.join(to_flex_consumption.groupby(["FLEX_CONSUM"]).max().rename(columns={"to_flex_consumption": "max_power"}))])
 
 
     def labour_ratio_cost(df):  # higher labour costs at night
